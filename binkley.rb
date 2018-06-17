@@ -127,7 +127,7 @@ def run
         $last_transaction = Transaction.new(-dollars, -PAYPAL_FEE, message.from.first_name, reason)
         $last_transaction.append_to_sheet($sheet)        
 
-        response = "#{compliment message.from.first_name} Sending $#{dollars} your way #{verb} #{reason}"
+        response = "#{compliment message.from.first_name} Sending #{$last_transaction.dollar_amount} your way #{verb} #{reason}"
         bot.api.send_message(chat_id: message.chat.id, text: response)
         
         bot.api.send_message(chat_id: message.chat.id, text: "The new fund balance is $#{remaining_balance}")
