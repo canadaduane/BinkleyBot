@@ -1,63 +1,13 @@
 require 'dotenv/load'
 require 'telegram/bot'
 require_relative 'gsheets'
+require_relative 'transaction'
+require_relative 'format'
 
 REMAINING_BALANCE_CELL = "B2" # sheet range / cell where we can get the remaining balance
 PAYPAL_FEE = 2.99
 
 $sheet = GSheets::Client.new.sheet(ENV['GOOGLE_SHEET_DOCUMENT_ID'], "Transactions")
-
-
-class Transaction
-  attr_accessor :amount, :fee, :person, :description, :timestamp
-
-  def initialize(amount, fee, person, description, timestamp = Time.now)
-    @amount, @fee, @person, @description = [amount, fee, person, description]
-    @timestamp = timestamp
-    @last_updated_range = nil
-  end
-
-  def total
-    @amount + @fee
-  end
-
-  def dollar_amount(sign = 1)
-    "$" + ("%.2f" % (@amount * sign))
-  end
-
-  def dollar_fee(sign = 1)
-    "$" + ("%.2f" % (@fee * sign))
-  end
-
-  def append_to_sheet(sheet)
-    sheet.append_row([
-      @timestamp,
-      "", # balance column
-      @amount,
-      @fee,
-      @person,
-      @description
-    ]).tap do |response|
-      # Store the last updated range in case we need to "undo" later
-      @last_updated_range = response.updates.updated_range
-    end
-  end
-
-  def undo(sheet)
-    if @last_updated_range
-      sheet.clear(@last_updated_range)
-      @last_updated_range = nil
-    end
-  end
-
-  def withdraw_description
-    "#{dollar_amount(-1)} (+#{dollar_fee(-1)} fee) : #{@person} : \"#{@description}\""
-  end
-
-  def to_s
-    "#{dollar_amount} (+#{dollar_fee} fee) : #{@person} : \"#{@description}\""
-  end
-end
 
 def compliment(name)
   case rand(10)
@@ -102,7 +52,7 @@ def run
       when '/help'
         bot.api.send_message(chat_id: message.chat.id, text: help_message)
       when '/balance'
-        bot.api.send_message(chat_id: message.chat.id, text: "The Johnson Eight Networking & Education Fund has a balance of $#{remaining_balance}")
+        bot.api.send_message(chat_id: message.chat.id, text: "The Johnson Eight Networking & Education Fund has a balance of #{format_dollars(remaining_balance)}")
       when '/history'
         response = "You can see the transaction history at https://docs.google.com/spreadsheets/d/1r9dSbMUS1svw5UkA9Nhw3ZcGNKoMIdTS0noi1P7dZW8/edit"
         bot.api.send_message(chat_id: message.chat.id, text: response)
@@ -113,7 +63,7 @@ def run
           
           response = "Canceling: #{$last_transaction.withdraw_description}"
           bot.api.send_message(chat_id: message.chat.id, text: response)
-          bot.api.send_message(chat_id: message.chat.id, text: "The new fund balance is $#{remaining_balance}")
+          bot.api.send_message(chat_id: message.chat.id, text: "The new fund balance is #{format_dollars(remaining_balance)}")
         else
           bot.api.send_message(chat_id: message.chat.id, text: "Sorry, too late! Check the /history")
         end
@@ -123,14 +73,21 @@ def run
         dollars, verb, reason = $1, $2, $3
         dollars = dollars.to_f
 
-        $last_powerup_time = Time.now
-        $last_transaction = Transaction.new(-dollars, -PAYPAL_FEE, message.from.first_name, reason)
-        $last_transaction.append_to_sheet($sheet)        
+        balance = remaining_balance()
 
-        response = "#{compliment message.from.first_name} Sending #{$last_transaction.dollar_amount} your way #{verb} #{reason}"
-        bot.api.send_message(chat_id: message.chat.id, text: response)
-        
-        bot.api.send_message(chat_id: message.chat.id, text: "The new fund balance is $#{remaining_balance}")
+        if balance >= dollars + PAYPAL_FEE
+          $last_powerup_time = Time.now
+          $last_transaction = Transaction.new(-dollars, -PAYPAL_FEE, message.from.first_name, reason)
+          $last_transaction.append_to_sheet($sheet)        
+
+          response = "#{compliment message.from.first_name} Sending #{$last_transaction.dollar_amount(-1)} your way #{verb} #{reason}"
+          bot.api.send_message(chat_id: message.chat.id, text: response)
+          
+          bot.api.send_message(chat_id: message.chat.id, text: "The new fund balance is #{format_dollars(remaining_balance)}")
+        else
+          response = "Sorry #{message.from.first_name}! Looks like the JENE fund doesn't have enough to pay out that amount right now."
+          bot.api.send_message(chat_id: message.chat.id, text: response)
+        end
       end
     end
   end
